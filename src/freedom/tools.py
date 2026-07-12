@@ -124,4 +124,9 @@ def execute(name: str, args_json: str) -> str:
           "set_goal": set_goal, "abandon_goal": abandon_goal}.get(name)
     if not fn:
         return f"tool sconosciuto: {name}"
-    return fn(**args)
+    try:
+        return fn(**args)
+    except TypeError as e:
+        return f"chiamata invalida: {e}. Riprova includendo tutti gli argomenti richiesti."
+    except Exception as e:
+        return f"errore del tool: {e}"

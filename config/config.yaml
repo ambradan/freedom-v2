@@ -5,7 +5,7 @@ substrate:
   base_url: http://litellm:4000/v1   # LiteLLM proxy inside compose network
   model: freedom-substrate           # alias; real model lives in config/litellm.yaml
   timeout_s: 120
-  max_tokens: 1500
+  max_tokens: 4000
 
 memory:
   episodic: true          # retrieval injection on/off (writes always continue)
