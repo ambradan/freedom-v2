@@ -36,6 +36,8 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       PG_DSN: postgresql://freedom:${POSTGRES_PASSWORD}@postgres:5432/freedom
       QDRANT_URL: http://qdrant:6333
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      SITE_REPO: ${SITE_REPO:-github.com/ambradan/freedom-interface.git}
     volumes:
       - ./src:/app/src
       - ./config:/app/config:ro

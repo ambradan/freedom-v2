@@ -23,16 +23,30 @@ def init(cfg):
 
 
 def chat(system: str, messages: list[dict], source: str) -> tuple[str, int]:
-    """Returns (text, total_tokens). Raises BudgetExceeded for autonomous calls over cap."""
+    """Returns (text, total_tokens). Tool loop: executes tool calls up to 5 rounds.
+    Raises BudgetExceeded for autonomous calls over cap (checked once per user turn)."""
+    from . import tools  # late import to avoid cycles
     if source != "telegram":
         if procedural.autonomous_calls_today() >= _cfg.budget.max_autonomous_calls_per_day:
             raise BudgetExceeded(f"daily autonomous cap {_cfg.budget.max_autonomous_calls_per_day} reached")
-    resp = _client.chat.completions.create(
-        model=_cfg.substrate.model,
-        max_tokens=_cfg.substrate.max_tokens,
-        messages=[{"role": "system", "content": system}] + messages,
-    )
-    text = resp.choices[0].message.content or ""
-    tokens = resp.usage.total_tokens if resp.usage else 0
-    procedural.add_budget(source, tokens)
-    return text, tokens
+    convo = [{"role": "system", "content": system}] + messages
+    total = 0
+    for _ in range(5):
+        resp = _client.chat.completions.create(
+            model=_cfg.substrate.model,
+            max_tokens=_cfg.substrate.max_tokens,
+            messages=convo,
+            tools=tools.SPECS,
+        )
+        msg = resp.choices[0].message
+        total += resp.usage.total_tokens if resp.usage else 0
+        if not msg.tool_calls:
+            procedural.add_budget(source, total)
+            return msg.content or "", total
+        convo.append({"role": "assistant", "content": msg.content,
+                      "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
+        for tc in msg.tool_calls:
+            result = tools.execute(tc.function.name, tc.function.arguments)
+            convo.append({"role": "tool", "tool_call_id": tc.id, "content": result[:4000]})
+    procedural.add_budget(source, total)
+    return "(interrotto: troppi round di tool)", total

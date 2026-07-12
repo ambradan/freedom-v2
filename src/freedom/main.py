@@ -52,6 +52,25 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"version {core.PROFILE_HASH}\n\n{head}\n[...]")
 
 
+async def cmd_genesis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not allowed(update):
+        return
+    await update.message.reply_text("Genesis: presento l'opportunita'...")
+    await jobs.genesis_job()
+    runs = await asyncio.to_thread(procedural.last_job_runs, 1)
+    job, started, status, reason, _ = runs[0]
+    out = await asyncio.to_thread(procedural.last_genesis_output)
+    await update.message.reply_text(f"esito: {status} ({reason})\n\n{(out or '')[:3500]}")
+
+
+async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not allowed(update):
+        return
+    goals = await asyncio.to_thread(procedural.active_goals)
+    await update.message.reply_text(
+        "Obiettivi attivi:\n" + "\n".join(f"- {g}" for g in goals) if goals else "Nessun obiettivo attivo.")
+
+
 def main():
     global cfg
     cfg = OmegaConf.load("/app/config/config.yaml")
@@ -64,6 +83,8 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("state", cmd_state))
     app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler("genesis", cmd_genesis))
+    app.add_handler(CommandHandler("goals", cmd_goals))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
     if cfg.genesis.enabled:
