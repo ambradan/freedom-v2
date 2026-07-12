@@ -104,6 +104,9 @@ def publish_page(filename: str, title: str, body_html: str) -> str:
 
 def set_goal(text: str, motivation: str = "") -> str:
     with procedural._conn() as c:  # noqa: SLF001
+        dup = c.execute("SELECT 1 FROM goals WHERE text=%s AND status='active'", (text,)).fetchone()
+        if dup:
+            return f"obiettivo gia' attivo (non duplicato): {text}"
         c.execute("INSERT INTO goals (text, motivation) VALUES (%s,%s)", (text, motivation))
     return f"obiettivo registrato: {text}"
 

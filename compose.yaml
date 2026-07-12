@@ -19,7 +19,6 @@ services:
       - qdrant_storage:/qdrant/storage
 
   litellm:
-    # SECURITY: pin the tag, verify it exists and is >= 1.83.0 (supply-chain incident 2026-03).
     image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-v1.83.0}
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     environment:
@@ -27,6 +26,10 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
     volumes:
       - ./config/litellm.yaml:/app/config.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:4000:4000"
 
   app:
     build: .
