@@ -1,0 +1,10 @@
+# LiteLLM proxy config - the ONLY place that knows which vendor/model answers.
+# Phase 2 (dual-substrate): add a second entry pointing at llama-server, same alias pattern.
+model_list:
+  - model_name: freedom-substrate
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6   # adjust to taste; scaffold never sees this
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

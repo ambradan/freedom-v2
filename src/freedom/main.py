@@ -1,0 +1,81 @@
+"""Entrypoint (D1: single process). Telegram bot + PTB JobQueue (APScheduler under the hood,
+one scheduler by construction - principle 4)."""
+import asyncio
+import datetime as dt
+import os
+import zoneinfo
+from omegaconf import OmegaConf
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from . import core, episodic, jobs, procedural, substrate
+
+cfg = None
+
+
+def allowed(update: Update) -> bool:
+    uid = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "")
+    return not uid or str(update.effective_user.id) == uid
+
+
+async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not allowed(update):
+        return
+    query = update.message.text
+    try:
+        text = await asyncio.to_thread(core.process, query, "telegram", str(update.effective_chat.id))
+    except substrate.BudgetExceeded as e:
+        text = f"[budget] {e}"
+    for i in range(0, len(text), cfg.telegram.chunk):
+        await update.message.reply_text(text[i:i + cfg.telegram.chunk])
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if allowed(update):
+        await update.message.reply_text(f"Freedom v2. Costituzione {core.PROFILE_HASH}, config {core.CONFIG_HASH}.")
+
+
+async def cmd_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not allowed(update):
+        return
+    runs = await asyncio.to_thread(procedural.last_job_runs, 5)
+    calls = await asyncio.to_thread(procedural.autonomous_calls_today)
+    lines = [f"profile={core.PROFILE_HASH} config={core.CONFIG_HASH}",
+             f"autonomous calls today: {calls}/{cfg.budget.max_autonomous_calls_per_day}"]
+    for job, started, status, reason, tokens in runs:
+        lines.append(f"{job} @ {started:%m-%d %H:%M} -> {status} {reason}"[:120])
+    await update.message.reply_text("\n".join(lines) or "no runs yet")
+
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if allowed(update):
+        head = "\n".join(core.PROFILE_TEXT.splitlines()[:6])
+        await update.message.reply_text(f"version {core.PROFILE_HASH}\n\n{head}\n[...]")
+
+
+def main():
+    global cfg
+    cfg = OmegaConf.load("/app/config/config.yaml")
+    procedural.init_db()
+    episodic.init(cfg.memory.collection, cfg.memory.embed_model)
+    substrate.init(cfg)
+    core.init(cfg)
+
+    app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("state", cmd_state))
+    app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+
+    if cfg.genesis.enabled:
+        tz = zoneinfo.ZoneInfo(cfg.genesis.tz)
+        app.job_queue.run_daily(jobs.genesis_job, dt.time(cfg.genesis.hour, cfg.genesis.minute, tzinfo=tz))
+    if cfg.backup.enabled:
+        tz = zoneinfo.ZoneInfo(cfg.backup.tz)
+        app.job_queue.run_daily(jobs.backup_job, dt.time(cfg.backup.hour, cfg.backup.minute, tzinfo=tz))
+
+    print(f"Freedom v2 up. profile={core.PROFILE_HASH} config={core.CONFIG_HASH}", flush=True)
+    app.run_polling(drop_pending_updates=True)
+
+
+if __name__ == "__main__":
+    main()

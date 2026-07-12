@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: freedom
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: freedom
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U freedom"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  litellm:
+    # SECURITY: pin the tag, verify it exists and is >= 1.83.0 (supply-chain incident 2026-03).
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-v1.83.0}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml:ro
+
+  app:
+    build: .
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ALLOWED_USER_ID: ${TELEGRAM_ALLOWED_USER_ID}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      PG_DSN: postgresql://freedom:${POSTGRES_PASSWORD}@postgres:5432/freedom
+      QDRANT_URL: http://qdrant:6333
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config:ro
+      - ./PROFILE.md:/app/PROFILE.md:ro
+      - ./backups:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      litellm:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  qdrant_storage:

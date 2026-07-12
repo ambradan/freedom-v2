@@ -1,0 +1,37 @@
+# Freedom v2 - runtime config (Hydra/OmegaConf)
+# Every flag here is an ablation switch. Config hash is logged with every LLM call.
+
+substrate:
+  base_url: http://litellm:4000/v1   # LiteLLM proxy inside compose network
+  model: freedom-substrate           # alias; real model lives in config/litellm.yaml
+  timeout_s: 120
+  max_tokens: 1500
+
+memory:
+  episodic: true          # retrieval injection on/off (writes always continue)
+  goals: true             # inject active goals into context
+  min_score: 0.55         # D2 - relevance threshold; below = silence
+  k: 5                    # max memories injected
+  window_turns: 10        # D2 - conversation window (turns)
+  embed_model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  collection: freedom_episodic
+
+genesis:
+  enabled: true
+  hour: 6                 # D3 - 06:00 daily, the slot that worked in v1
+  minute: 0
+  tz: Europe/Rome
+
+backup:
+  enabled: true
+  hour: 3
+  minute: 30
+  tz: Europe/Rome
+  dir: /app/backups       # host-mounted; point rclone/cloud sync here or set remote below
+  rclone_remote: ""       # e.g. "b2:freedom-backups" - empty = local only (TODO offsite)
+
+budget:
+  max_autonomous_calls_per_day: 24   # D4 STUB - Ambra's call; chat (telegram) is never blocked
+
+telegram:
+  chunk: 4000
