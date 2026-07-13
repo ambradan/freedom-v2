@@ -22,8 +22,10 @@ def init(cfg):
     )
 
 
-def chat(system: str, messages: list[dict], source: str) -> tuple[str, int]:
-    """Returns (text, total_tokens). Tool loop: executes tool calls up to 5 rounds.
+def chat(system: str, messages: list[dict], source: str) -> tuple[str, int, list[dict]]:
+    """Returns (text, total_tokens, convo). Il convo completo (round di tool inclusi)
+    torna al chiamante per il logging (FRE-18): se non è in traccia, non è successo.
+    Tool loop: executes tool calls up to 5 rounds.
     Raises BudgetExceeded for autonomous calls over cap (checked once per user turn)."""
     from . import tools  # late import to avoid cycles
     if source != "telegram":
@@ -42,7 +44,7 @@ def chat(system: str, messages: list[dict], source: str) -> tuple[str, int]:
         total += resp.usage.total_tokens if resp.usage else 0
         if not msg.tool_calls:
             procedural.add_budget(source, total)
-            return msg.content or "", total
+            return msg.content or "", total, convo
         convo.append({"role": "assistant", "content": msg.content,
                       "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
         for tc in msg.tool_calls:
@@ -50,4 +52,4 @@ def chat(system: str, messages: list[dict], source: str) -> tuple[str, int]:
             # 15000: read_page deve restituire pagine intere, non mozzate (13/7)
             convo.append({"role": "tool", "tool_call_id": tc.id, "content": result[:15000]})
     procedural.add_budget(source, total)
-    return "(interrotto: troppi round di tool)", total
+    return "(interrotto: troppi round di tool)", total, convo

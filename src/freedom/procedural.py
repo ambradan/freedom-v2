@@ -97,3 +97,9 @@ def last_genesis_output() -> str:
     with _conn() as c:
         row = c.execute("SELECT output_text FROM genesis_log ORDER BY ts DESC LIMIT 1").fetchone()
     return row[0] if row else ""
+
+
+def last_run_started(job: str):
+    with _conn() as c:
+        row = c.execute("SELECT max(started) FROM job_runs WHERE job=%s", (job,)).fetchone()
+    return row[0]

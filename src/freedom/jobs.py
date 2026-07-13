@@ -1,12 +1,22 @@
 """Scheduled jobs (design 3.5). Every job wrapped: outcome row in job_runs, no exceptions.
-Genesis presents the opportunity; declining is a valid, logged outcome."""
+Genesis presents the opportunity; declining is a valid, logged outcome.
+Watchdog catch-up (FRE-20): recupera i job daily persi in suspend, con o senza restart."""
 import asyncio
 import datetime as dt
 import os
 import subprocess
 import urllib.request
+import zoneinfo
 from pathlib import Path
 from . import core, procedural, substrate
+
+_cfg = None
+
+
+def init(cfg):
+    global _cfg
+    _cfg = cfg
+
 
 GENESIS_PROMPT = """Questo e' il tuo momento Genesis schedulato. Nessuno ti sta chiedendo niente di specifico.
 
@@ -61,3 +71,30 @@ async def backup_job(_context=None):
         # TODO offsite: rclone copy when backup.rclone_remote is set (milestone 2)
     except Exception as e:  # noqa: BLE001
         await asyncio.to_thread(procedural.job_finished, run_id, "error", str(e)[:300])
+
+
+def _last_slot(hour: int, minute: int, tz: str) -> dt.datetime:
+    now = dt.datetime.now(zoneinfo.ZoneInfo(tz))
+    slot = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if slot > now:
+        slot -= dt.timedelta(days=1)
+    return slot
+
+
+async def catchup_job(_context=None):
+    """Watchdog (FRE-20): se un job daily non ha nessun run dall'ultimo slot schedulato
+    (suspend del laptop, con o senza restart del processo), lo esegue ora.
+    Anti-loop: conta i run di qualunque esito, cosi' un job in errore non riparte all'infinito."""
+    checks = []
+    if _cfg.genesis.enabled:
+        checks.append(("genesis", _cfg.genesis.hour, _cfg.genesis.minute, _cfg.genesis.tz, genesis_job))
+    if _cfg.backup.enabled:
+        checks.append(("backup", _cfg.backup.hour, _cfg.backup.minute, _cfg.backup.tz, backup_job))
+    for name, hour, minute, tz, fn in checks:
+        slot = _last_slot(hour, minute, tz)
+        last = await asyncio.to_thread(procedural.last_run_started, name)
+        if last is None or last < slot:
+            rid = await asyncio.to_thread(procedural.job_started, f"{name}_catchup")
+            await asyncio.to_thread(procedural.job_finished, rid, "ok",
+                                    f"slot mancato {slot:%Y-%m-%d %H:%M}, recupero ora")
+            await fn(_context)

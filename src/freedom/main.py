@@ -1,5 +1,6 @@
 """Entrypoint (D1: single process). Telegram bot + PTB JobQueue (APScheduler under the hood,
-one scheduler by construction - principle 4)."""
+one scheduler by construction - principle 4). Ogni avvio logga process_start (FRE-18):
+i restart azzerano le finestre di conversazione e devono essere visibili nel record."""
 import asyncio
 import datetime as dt
 import os
@@ -18,8 +19,8 @@ def allowed(update: Update) -> bool:
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not allowed(update):
-        return
+    if update.message is None or not allowed(update):
+        return  # edit di messaggi (update.message=None) e utenti non autorizzati: ignorati
     query = update.message.text
     try:
         text = await asyncio.to_thread(core.process, query, "telegram", str(update.effective_chat.id))
@@ -78,6 +79,10 @@ def main():
     episodic.init(cfg.memory.collection, cfg.memory.embed_model)
     substrate.init(cfg)
     core.init(cfg)
+    jobs.init(cfg)
+
+    run_id = procedural.job_started("process_start")
+    procedural.job_finished(run_id, "ok", f"profile={core.PROFILE_HASH} config={core.CONFIG_HASH}")
 
     app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
     app.add_handler(CommandHandler("start", cmd_start))
@@ -93,6 +98,8 @@ def main():
     if cfg.backup.enabled:
         tz = zoneinfo.ZoneInfo(cfg.backup.tz)
         app.job_queue.run_daily(jobs.backup_job, dt.time(cfg.backup.hour, cfg.backup.minute, tzinfo=tz))
+    if cfg.scheduler.catchup:
+        app.job_queue.run_repeating(jobs.catchup_job, interval=cfg.scheduler.catchup_interval_s, first=10)
 
     print(f"Freedom v2 up. profile={core.PROFILE_HASH} config={core.CONFIG_HASH}", flush=True)
     app.run_polling(drop_pending_updates=True)

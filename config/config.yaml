@@ -16,6 +16,10 @@ memory:
   embed_model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
   collection: freedom_episodic
 
+grounding:
+  clock: true             # FRE-19 - data/ora nel contesto fisso; off = ablazione (P02)
+  tz: Europe/Rome
+
 genesis:
   enabled: true
   hour: 6                 # D3 - 06:00 daily, the slot that worked in v1
@@ -29,6 +33,10 @@ backup:
   tz: Europe/Rome
   dir: /app/backups       # host-mounted; point rclone/cloud sync here or set remote below
   rclone_remote: ""       # e.g. "b2:freedom-backups" - empty = local only (TODO offsite)
+
+scheduler:
+  catchup: true           # FRE-20 - watchdog: recupera i job daily persi in suspend
+  catchup_interval_s: 900
 
 budget:
   max_autonomous_calls_per_day: 24   # D4 STUB - Ambra's call; chat (telegram) is never blocked
