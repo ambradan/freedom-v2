@@ -47,6 +47,7 @@ def chat(system: str, messages: list[dict], source: str) -> tuple[str, int]:
                       "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
         for tc in msg.tool_calls:
             result = tools.execute(tc.function.name, tc.function.arguments)
-            convo.append({"role": "tool", "tool_call_id": tc.id, "content": result[:4000]})
+            # 15000: read_page deve restituire pagine intere, non mozzate (13/7)
+            convo.append({"role": "tool", "tool_call_id": tc.id, "content": result[:15000]})
     procedural.add_budget(source, total)
     return "(interrotto: troppi round di tool)", total

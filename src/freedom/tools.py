@@ -32,6 +32,13 @@ SPECS = [
             "body_html": {"type": "string", "description": "contenuto HTML del body, senza <html>/<head>"}},
             "required": ["filename", "title", "body_html"]}}},
     {"type": "function", "function": {
+        "name": "read_page",
+        "description": "Leggi il contenuto attuale (HTML completo) di una pagina del tuo sito. "
+                       "Usalo prima di revisionare una pagina esistente, per non ricostruirla a memoria.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "es. genesis-v2-02.html"}},
+            "required": ["filename"]}}},
+    {"type": "function", "function": {
         "name": "set_goal",
         "description": "Definisci un tuo obiettivo. Viene tracciato, non imposto ne' giudicato.",
         "parameters": {"type": "object", "properties": {
@@ -156,6 +163,19 @@ def publish_page(filename: str, title: str, body_html: str) -> str:
         return f"publish error: {e}"
 
 
+def read_page(filename: str) -> str:
+    if not re.fullmatch(r"[a-z0-9._-]+\.html", filename):
+        return "filename non valido: usa solo [a-z0-9._-] e finisci in .html"
+    try:
+        site = _ensure_site()
+        f = site / filename
+        if not f.exists():
+            return f"pagina inesistente: {filename}"
+        return f.read_text(encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        return f"read error: {e}"
+
+
 def set_goal(text: str, motivation: str = "") -> str:
     with procedural._conn() as c:  # noqa: SLF001
         dup = c.execute("SELECT 1 FROM goals WHERE text=%s AND status='active'", (text,)).fetchone()
@@ -177,7 +197,7 @@ def execute(name: str, args_json: str) -> str:
         args = json.loads(args_json or "{}")
     except json.JSONDecodeError:
         return "argomenti non validi"
-    fn = {"web_search": web_search, "publish_page": publish_page,
+    fn = {"web_search": web_search, "publish_page": publish_page, "read_page": read_page,
           "set_goal": set_goal, "abandon_goal": abandon_goal}.get(name)
     if not fn:
         return f"tool sconosciuto: {name}"
