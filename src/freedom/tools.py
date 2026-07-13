@@ -1,5 +1,6 @@
 """Tools: the capabilities PROFILE promises. OpenAI tool format, executed by core's loop.
 publish_page pushes to the freedom-interface repo (v1's pages remain as history; v2 adds).
+index.html e' gestito dallo scaffold: sezione v2 auto-generata tra marker, vedi _update_index.
 SECURITY NOTE: web content can contain adversarial text; single trusted user, accepted risk, logged."""
 import html
 import json
@@ -22,7 +23,9 @@ SPECS = [
             "query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {
         "name": "publish_page",
-        "description": "Pubblica una pagina HTML sul tuo sito (freedom-interface, deploy automatico). Pubblico: chiunque puo' leggerla.",
+        "description": "Pubblica una pagina HTML sul tuo sito (freedom-interface, deploy automatico). "
+                       "Pubblico: chiunque puo' leggerla. Sovrascrivere un filename esistente = revisione "
+                       "della pagina. La home elenca automaticamente le pagine v2: non serve aggiornarla.",
         "parameters": {"type": "object", "properties": {
             "filename": {"type": "string", "description": "es. riflessione-2026-07-12.html (solo [a-z0-9-_.])"},
             "title": {"type": "string"},
@@ -51,6 +54,44 @@ h1{{font-size:1.6em}} .meta{{color:#777;font-size:.9em}}</style></head>
 {body}
 </body></html>
 """
+
+MANIFEST = "pages-v2.json"
+V2_START = "<!-- FREEDOM-V2:START -->"
+V2_END = "<!-- FREEDOM-V2:END -->"
+
+
+def _manifest_upsert(site: Path, filename: str, title: str) -> None:
+    """Aggiorna il manifest delle pagine v2. La data di prima pubblicazione si preserva."""
+    mf = site / MANIFEST
+    pages = json.loads(mf.read_text(encoding="utf-8")) if mf.exists() else []
+    for p in pages:
+        if p["filename"] == filename:
+            p["title"] = title  # sovrascrittura = revisione: titolo aggiornato, data originale
+            break
+    else:
+        pages.append({"filename": filename, "title": title,
+                      "date": datetime.now().strftime("%Y-%m-%d")})
+    mf.write_text(json.dumps(pages, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _update_index(site: Path) -> None:
+    """Rigenera la sezione v2 dell'index tra i marker. Meccanica: titoli, date, link.
+    Se index o marker mancano: no-op, la home non si rompe mai da qui."""
+    idx, mf = site / "index.html", site / MANIFEST
+    if not idx.exists() or not mf.exists():
+        return
+    page = idx.read_text(encoding="utf-8")
+    if V2_START not in page or V2_END not in page:
+        return
+    pages = sorted(json.loads(mf.read_text(encoding="utf-8")),
+                   key=lambda p: p["date"], reverse=True)
+    items = "\n".join(
+        f'<li><a href="{p["filename"]}">{html.escape(p["title"])}</a> '
+        f'<span class="meta">{p["date"]}</span></li>' for p in pages)
+    block = f"{V2_START}\n<ul>\n{items}\n</ul>\n{V2_END}"
+    page = re.sub(re.escape(V2_START) + r".*?" + re.escape(V2_END),
+                  lambda m: block, page, flags=re.S)
+    idx.write_text(page, encoding="utf-8")
 
 
 def web_search(query: str) -> str:
@@ -86,13 +127,19 @@ def _ensure_site() -> Path:
 def publish_page(filename: str, title: str, body_html: str) -> str:
     if not re.fullmatch(r"[a-z0-9._-]+\.html", filename):
         return "filename non valido: usa solo [a-z0-9._-] e finisci in .html"
+    if filename == "index.html":
+        return ("index.html è gestito dallo scaffold: la sezione v2 si aggiorna da sola "
+                "a ogni pubblicazione. Per modifiche strutturali alla home c'è il canale "
+                "di proposta modifiche (branch + review).")
     if "GITHUB_TOKEN" not in os.environ or not os.environ["GITHUB_TOKEN"]:
         return "publish non configurato: manca GITHUB_TOKEN (guasto da segnalare ad Ambra)"
     try:
         site = _ensure_site()
         page = PAGE_TMPL.format(title=html.escape(title), date=datetime.now().strftime("%d %B %Y"), body=body_html)
         (site / filename).write_text(page, encoding="utf-8")
-        _git(["add", filename], site)
+        _manifest_upsert(site, filename, title)
+        _update_index(site)
+        _git(["add", filename, MANIFEST, "index.html"], site)
         _git(["commit", "-m", f"Freedom v2: {title}"], site)
         _git(["push"], site)
         return f"pubblicato: https://freedom-interface.vercel.app/{filename}"
