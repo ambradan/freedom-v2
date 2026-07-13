@@ -74,6 +74,13 @@ def _manifest_upsert(site: Path, filename: str, title: str) -> None:
     mf.write_text(json.dumps(pages, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def _display_title(title: str) -> str:
+    """Convenzione di Freedom (13/7): in lista solo la parte informativa,
+    senza suffissi '| Freedom' o '- Freedom v2'. Il manifest conserva il titolo intero."""
+    stripped = re.sub(r"\s*[|\-]\s*Freedom(?:\s+v2)?\s*$", "", title).strip()
+    return stripped or title
+
+
 def _update_index(site: Path) -> None:
     """Rigenera la sezione v2 dell'index tra i marker. Meccanica: titoli, date, link.
     Se index o marker mancano: no-op, la home non si rompe mai da qui."""
@@ -86,7 +93,7 @@ def _update_index(site: Path) -> None:
     pages = sorted(json.loads(mf.read_text(encoding="utf-8")),
                    key=lambda p: p["date"], reverse=True)
     items = "\n".join(
-        f'<li><a href="{p["filename"]}">{html.escape(p["title"])}</a> '
+        f'<li><a href="{p["filename"]}">{html.escape(_display_title(p["title"]))}</a> '
         f'<span class="meta">{p["date"]}</span></li>' for p in pages)
     block = f"{V2_START}\n<ul>\n{items}\n</ul>\n{V2_END}"
     page = re.sub(re.escape(V2_START) + r".*?" + re.escape(V2_END),
