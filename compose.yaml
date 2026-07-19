@@ -5,6 +5,7 @@ services:
       POSTGRES_USER: freedom
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: freedom
+    restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,8 +18,12 @@ services:
     image: qdrant/qdrant:v1.12.4
     volumes:
       - qdrant_storage:/qdrant/storage
+    ports:
+      - "127.0.0.1:6333:6333"
+    restart: unless-stopped
 
   litellm:
+    restart: unless-stopped
     image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-v1.83.0}
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     environment:

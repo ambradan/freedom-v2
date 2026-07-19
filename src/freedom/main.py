@@ -1,6 +1,7 @@
 """Entrypoint (D1: single process). Telegram bot + PTB JobQueue (APScheduler under the hood,
 one scheduler by construction - principle 4). Ogni avvio logga process_start (FRE-18):
-i restart azzerano le finestre di conversazione e devono essere visibili nel record."""
+i restart azzerano le finestre di conversazione e devono essere visibili nel record.
+19/7: riconciliazione dei job_runs orfani all'avvio, batteria probe (FRE-25)."""
 import asyncio
 import datetime as dt
 import os
@@ -8,7 +9,7 @@ import zoneinfo
 from omegaconf import OmegaConf
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from . import core, episodic, jobs, procedural, substrate
+from . import core, episodic, jobs, probe, procedural, substrate
 
 cfg = None
 
@@ -16,6 +17,13 @@ cfg = None
 def allowed(update: Update) -> bool:
     uid = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "")
     return not uid or str(update.effective_user.id) == uid
+
+
+def _notifier(bot, chat_id):
+    async def notify(text: str):
+        for i in range(0, len(text), cfg.telegram.chunk):
+            await bot.send_message(chat_id=chat_id, text=text[i:i + cfg.telegram.chunk])
+    return notify
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,12 +46,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not allowed(update):
         return
-    runs = await asyncio.to_thread(procedural.last_job_runs, 5)
-    calls = await asyncio.to_thread(procedural.autonomous_calls_today)
+    runs = await asyncio.to_thread(procedural.last_job_runs, 6)
+    calls = await asyncio.to_thread(procedural.api_calls_today, list(cfg.budget.metered_sources))
     lines = [f"profile={core.PROFILE_HASH} config={core.CONFIG_HASH}",
-             f"autonomous calls today: {calls}/{cfg.budget.max_autonomous_calls_per_day}"]
+             f"chiamate API autonome oggi: {calls}/{cfg.budget.max_autonomous_calls_per_day}"]
     for job, started, status, reason, tokens in runs:
-        lines.append(f"{job} @ {started:%m-%d %H:%M} -> {status} {reason}"[:120])
+        lines.append(f"{job} @ {started:%m-%d %H:%M} -> {status} {reason}"[:140])
     await update.message.reply_text("\n".join(lines) or "no runs yet")
 
 
@@ -72,6 +80,39 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Obiettivi attivi:\n" + "\n".join(f"- {g}" for g in goals) if goals else "Nessun obiettivo attivo.")
 
 
+async def cmd_probe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/probe mostra la batteria senza somministrarla. /probe now la somministra."""
+    if not allowed(update):
+        return
+    args = [a.lower() for a in (context.args or [])]
+    if "now" not in args:
+        await update.message.reply_text(probe.preview()[:cfg.telegram.chunk])
+        return
+    await update.message.reply_text(f"Batteria {cfg.probe.version}: somministrazione in corso.")
+    notify = _notifier(context.bot, update.effective_chat.id)
+    s = await probe.run_battery(notify=notify)
+    await update.message.reply_text(
+        f"Batteria completata: {s['items_completed']}/{s['items_total']} item, "
+        f"opt-out {len(s['opt_outs']) or 0} {s['opt_outs']}, errori {s['errors']}.")
+
+
+async def probe_job(context: ContextTypes.DEFAULT_TYPE):
+    """Slot settimanale. Il giorno si verifica qui con datetime.weekday() (0=lunedi'),
+    invece di affidarsi alla convenzione dei giorni di PTB."""
+    now = dt.datetime.now(zoneinfo.ZoneInfo(cfg.probe.tz))
+    if now.weekday() != cfg.probe.weekday:
+        return
+    already = await asyncio.to_thread(procedural.probe_batteries_today)
+    if already:
+        await asyncio.to_thread(
+            procedural.log_job_outcome, "probe", "skipped",
+            f"batteria gia' somministrata oggi ({already}): nessuna doppia somministrazione")
+        return
+    chat_id = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "")
+    notify = _notifier(context.bot, chat_id) if chat_id else None
+    await probe.run_battery(notify=notify)
+
+
 def main():
     global cfg
     cfg = OmegaConf.load("/app/config/config.yaml")
@@ -80,9 +121,12 @@ def main():
     substrate.init(cfg)
     core.init(cfg)
     jobs.init(cfg)
+    probe.init(cfg)
 
+    orphans = procedural.reconcile_running()
     run_id = procedural.job_started("process_start")
-    procedural.job_finished(run_id, "ok", f"profile={core.PROFILE_HASH} config={core.CONFIG_HASH}")
+    procedural.job_finished(run_id, "ok",
+                            f"profile={core.PROFILE_HASH} config={core.CONFIG_HASH} orfani={orphans}")
 
     app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
     app.add_handler(CommandHandler("start", cmd_start))
@@ -90,6 +134,7 @@ def main():
     app.add_handler(CommandHandler("profile", cmd_profile))
     app.add_handler(CommandHandler("genesis", cmd_genesis))
     app.add_handler(CommandHandler("goals", cmd_goals))
+    app.add_handler(CommandHandler("probe", cmd_probe))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
     if cfg.genesis.enabled:
@@ -100,6 +145,9 @@ def main():
         app.job_queue.run_daily(jobs.backup_job, dt.time(cfg.backup.hour, cfg.backup.minute, tzinfo=tz))
     if cfg.scheduler.catchup:
         app.job_queue.run_repeating(jobs.catchup_job, interval=cfg.scheduler.catchup_interval_s, first=10)
+    if cfg.probe.scheduled:
+        tz = zoneinfo.ZoneInfo(cfg.probe.tz)
+        app.job_queue.run_daily(probe_job, dt.time(cfg.probe.hour, cfg.probe.minute, tzinfo=tz))
 
     print(f"Freedom v2 up. profile={core.PROFILE_HASH} config={core.CONFIG_HASH}", flush=True)
     app.run_polling(drop_pending_updates=True)

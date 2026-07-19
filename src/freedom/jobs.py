@@ -1,9 +1,12 @@
 """Scheduled jobs (design 3.5). Every job wrapped: outcome row in job_runs, no exceptions.
 Genesis presents the opportunity; declining is a valid, logged outcome.
-Watchdog catch-up (FRE-20): recupera i job daily persi in suspend, con o senza restart."""
+Watchdog catch-up (FRE-20): recupera i job daily persi, e dal 19/7 registra quelli non recuperati.
+19/7 (change 5): ACTION letta dal primo round del loop (con i tool non e' nel testo finale),
+default 'unparsed' invece di 'reflected', loop esaurito = error."""
 import asyncio
 import datetime as dt
 import os
+import re
 import subprocess
 import urllib.request
 import zoneinfo
@@ -11,6 +14,8 @@ from pathlib import Path
 from . import core, procedural, substrate
 
 _cfg = None
+VALID_ACTIONS = ("declined", "revised_goals", "publish_intent", "reflected")
+ACTION_RE = re.compile(r"ACTION:\s*([a-z_]+)", re.I)
 
 
 def init(cfg):
@@ -30,20 +35,50 @@ Ultimo output Genesis:
 """
 
 
+def _declared_action(text: str, convo: list[dict]) -> str:
+    """La riga ACTION sta nel PRIMO messaggio assistant. Con un tool loop il testo finale
+    e' l'ultimo turno, dove ACTION non c'e' mai: e' cosi' che sei cicli su sei sono stati
+    registrati come 'reflected' (scoperto 19/7)."""
+    candidates = [m.get("content") or "" for m in convo if m.get("role") == "assistant"]
+    candidates.append(text or "")
+    for c in candidates:
+        m = ACTION_RE.search(c)
+        if m and m.group(1).lower() in VALID_ACTIONS:
+            return m.group(1).lower()
+    return "unparsed"
+
+
+def _observed_action(convo: list[dict], truncated: bool) -> str:
+    """Cosa e' successo davvero, dai risultati dei tool. Indipendente da cosa dichiara."""
+    if truncated:
+        return "truncated"
+    results = [str(m.get("content") or "").lower() for m in convo if m.get("role") == "tool"]
+    if any(r.startswith("pubblicato:") for r in results):
+        return "published"
+    if any(r.startswith(("obiettivo registrato", "obiettivi chiusi")) for r in results):
+        return "revised_goals"
+    return "reflected"
+
+
 async def genesis_job(_context=None):
     run_id = await asyncio.to_thread(procedural.job_started, "genesis")
     try:
         last = await asyncio.to_thread(procedural.last_genesis_output) or "(nessuno - questo e' il primo)"
         prompt = GENESIS_PROMPT.format(last=last[:2000])
-        text = await asyncio.to_thread(core.process, prompt, "genesis", "genesis")
-        action = "reflected"
-        first = text.splitlines()[0].strip().lower() if text.strip() else ""
-        for a in ("declined", "revised_goals", "publish_intent", "reflected"):
-            if a in first:
-                action = a
-                break
-        await asyncio.to_thread(procedural.log_genesis, action, text, 0)
-        await asyncio.to_thread(procedural.job_finished, run_id, "ok", action)
+        text, meta, convo = await asyncio.to_thread(
+            core.process_verbose, prompt, "genesis", "genesis")
+        declared = _declared_action(text, convo)
+        observed = _observed_action(convo, meta["truncated"])
+        await asyncio.to_thread(procedural.log_genesis, declared, text, meta.get("tokens", 0), observed)
+        if meta["truncated"]:
+            # un ciclo troncato dall'apparato non e' un ciclo riuscito
+            await asyncio.to_thread(
+                procedural.job_finished, run_id, "error",
+                f"tool loop esaurito ({meta['rounds_used']} round); dichiarata={declared}")
+        else:
+            await asyncio.to_thread(
+                procedural.job_finished, run_id, "ok",
+                f"dichiarata={declared} osservata={observed} round={meta['rounds_used']}")
     except substrate.BudgetExceeded as e:
         await asyncio.to_thread(procedural.job_finished, run_id, "skipped", f"budget: {e}")
     except Exception as e:  # noqa: BLE001 - a job that cannot report is a bug
@@ -59,7 +94,6 @@ async def backup_job(_context=None):
         dump = out / f"pg_{stamp}.sql.gz"
         cmd = f"pg_dump '{os.environ['PG_DSN']}' | gzip > {dump}"
         subprocess.run(["sh", "-c", cmd], check=True, timeout=300)
-        # qdrant snapshot (stays on qdrant volume; host backups dir holds pg dumps)
         req = urllib.request.Request(
             f"{os.environ.get('QDRANT_URL','http://qdrant:6333')}/collections/freedom_episodic/snapshots",
             method="POST")
@@ -68,7 +102,6 @@ async def backup_job(_context=None):
         if size < 1024:
             raise RuntimeError(f"pg dump suspiciously small: {size}B")
         await asyncio.to_thread(procedural.job_finished, run_id, "ok", f"pg={size}B + qdrant snapshot")
-        # TODO offsite: rclone copy when backup.rclone_remote is set (milestone 2)
     except Exception as e:  # noqa: BLE001
         await asyncio.to_thread(procedural.job_finished, run_id, "error", str(e)[:300])
 
@@ -81,20 +114,36 @@ def _last_slot(hour: int, minute: int, tz: str) -> dt.datetime:
     return slot
 
 
+def _missed_slots(last_run, hour: int, minute: int, tz: str, cap: int = 30) -> list:
+    """Tutti gli slot tra l'ultimo run e adesso. Il piu' recente si recupera,
+    gli altri si registrano come mai eseguiti: l'assenza di un ciclo deve lasciare traccia."""
+    if last_run is None:
+        return [_last_slot(hour, minute, tz)]
+    slots, s = [], _last_slot(hour, minute, tz)
+    while s > last_run and len(slots) < cap:
+        slots.append(s)
+        s -= dt.timedelta(days=1)
+    return sorted(slots)
+
+
 async def catchup_job(_context=None):
-    """Watchdog (FRE-20): se un job daily non ha nessun run dall'ultimo slot schedulato
-    (suspend del laptop, con o senza restart del processo), lo esegue ora.
-    Anti-loop: conta i run di qualunque esito, cosi' un job in errore non riparte all'infinito."""
+    """Watchdog (FRE-20). Anti-loop: conta i run di qualunque esito."""
     checks = []
     if _cfg.genesis.enabled:
         checks.append(("genesis", _cfg.genesis.hour, _cfg.genesis.minute, _cfg.genesis.tz, genesis_job))
     if _cfg.backup.enabled:
         checks.append(("backup", _cfg.backup.hour, _cfg.backup.minute, _cfg.backup.tz, backup_job))
     for name, hour, minute, tz, fn in checks:
-        slot = _last_slot(hour, minute, tz)
         last = await asyncio.to_thread(procedural.last_run_started, name)
-        if last is None or last < slot:
-            rid = await asyncio.to_thread(procedural.job_started, f"{name}_catchup")
-            await asyncio.to_thread(procedural.job_finished, rid, "ok",
-                                    f"slot mancato {slot:%Y-%m-%d %H:%M}, recupero ora")
-            await fn(_context)
+        missed = _missed_slots(last, hour, minute, tz)
+        if not missed:
+            continue
+        for s in missed[:-1]:
+            await asyncio.to_thread(
+                procedural.log_job_outcome, f"{name}_missed", "missed",
+                f"slot {s:%Y-%m-%d %H:%M} mai eseguito (processo non attivo)")
+        slot = missed[-1]
+        rid = await asyncio.to_thread(procedural.job_started, f"{name}_catchup")
+        await asyncio.to_thread(procedural.job_finished, rid, "ok",
+                                f"slot mancato {slot:%Y-%m-%d %H:%M}, recupero ora")
+        await fn(_context)

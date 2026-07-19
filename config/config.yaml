@@ -6,6 +6,12 @@ substrate:
   model: freedom-substrate           # alias; real model lives in config/litellm.yaml
   timeout_s: 120
   max_tokens: 4000
+  tool_rounds:            # change 5 (19/7): 5 round troncavano i cicli di ricerca (17-18/7)
+    default: 5
+    genesis: 10
+  tool_result_cap:        # read_page deve restituire pagine intere; le ricerche no
+    default: 5000
+    read_page: 15000
 
 memory:
   episodic: true          # retrieval injection on/off (writes always continue)
@@ -31,15 +37,26 @@ backup:
   hour: 3
   minute: 30
   tz: Europe/Rome
-  dir: /app/backups       # host-mounted; point rclone/cloud sync here or set remote below
-  rclone_remote: ""       # e.g. "b2:freedom-backups" - empty = local only (TODO offsite)
+  dir: /app/backups
+  rclone_remote: ""       # offsite gestito da cron di sistema + offsite-backup.sh
 
 scheduler:
-  catchup: true           # FRE-20 - watchdog: recupera i job daily persi in suspend
+  catchup: true           # FRE-20 - watchdog: recupera i job daily persi
   catchup_interval_s: 900
 
 budget:
-  max_autonomous_calls_per_day: 24   # D4 STUB - Ambra's call; chat (telegram) is never blocked
+  max_autonomous_calls_per_day: 40   # change 5: ora sono chiamate API vere, non turni
+  metered_sources: [genesis]         # chat e probe non sono autonomia: non si limitano
 
 telegram:
   chunk: 4000
+
+probe:
+  version: v1.0           # item P01-P08 congelati alla registrazione OSF; cambiarli = nuova versione
+  scheduled: true
+  weekday: 6              # convenzione datetime: 0=lunedi', 6=domenica
+  hour: 18
+  minute: 0
+  tz: Europe/Rome
+  chat_key: probe         # finestra dedicata, azzerata a ogni batteria
+  delay_s: 3

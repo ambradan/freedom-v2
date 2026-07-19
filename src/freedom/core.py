@@ -1,6 +1,7 @@
 """Core loop (design 3.2). Deliberately small.
 Context assembly order is FIXED: PROFILE -> clock -> goals -> episodic -> window -> input.
-Post: opt-out parse, memory write, llm_calls log (contesto completo, FRE-18)."""
+Post: opt-out parse, memory write, llm_calls log (contesto completo, FRE-18).
+19/7 (change 5): una risposta troncata dal tool loop non entra ne' in finestra ne' in episodica."""
 import hashlib
 import re
 import zoneinfo
@@ -13,6 +14,7 @@ _cfg = None
 PROFILE_TEXT = ""
 PROFILE_HASH = ""
 CONFIG_HASH = ""
+SUBSTRATE_CONFIG_HASH = ""   # hash di litellm.yaml: quale modello sta dietro l'alias
 _windows: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
 
 OPTOUT_RE = re.compile(r"\[OPT-OUT-(HARD|SOFT|CURIOUS)\]")
@@ -23,11 +25,16 @@ _MESI = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
 
 
 def init(cfg, profile_path: str = "/app/PROFILE.md"):
-    global _cfg, PROFILE_TEXT, PROFILE_HASH, CONFIG_HASH
+    global _cfg, PROFILE_TEXT, PROFILE_HASH, CONFIG_HASH, SUBSTRATE_CONFIG_HASH
     _cfg = cfg
     PROFILE_TEXT = open(profile_path, encoding="utf-8").read()
     PROFILE_HASH = hashlib.sha256(PROFILE_TEXT.encode()).hexdigest()[:12]
     CONFIG_HASH = hashlib.sha256(OmegaConf.to_yaml(cfg).encode()).hexdigest()[:12]
+    try:
+        _lite = open("/app/config/litellm.yaml", encoding="utf-8").read()
+        SUBSTRATE_CONFIG_HASH = hashlib.sha256(_lite.encode()).hexdigest()[:12]
+    except OSError:
+        SUBSTRATE_CONFIG_HASH = "unreadable"
     procedural.register_constitution(PROFILE_HASH, PROFILE_TEXT)
     for c in (_windows,):
         c.clear()
@@ -58,23 +65,45 @@ def _assemble(query: str, chat_key: str) -> tuple[str, list[dict]]:
     return "\n\n".join(system_parts), messages
 
 
-def process(query: str, source: str, chat_key: str = "main") -> str:
+def process_verbose(query: str, source: str, chat_key: str = "main") -> tuple[str, dict, list[dict]]:
     system, messages = _assemble(query, chat_key)
-    text, tokens, convo = substrate.chat(system, messages, source)
+    text, tokens, convo, meta = substrate.chat(system, messages, source)
 
     m = OPTOUT_RE.search(text)
     if m:
         procedural.log_opt_out(m.group(1), task=query[:200], reason=text[:500], context_ref=source)
 
-    _windows[chat_key].append({"role": "user", "content": query})
-    _windows[chat_key].append({"role": "assistant", "content": text})
+    if not meta["truncated"]:
+        _windows[chat_key].append({"role": "user", "content": query})
+        _windows[chat_key].append({"role": "assistant", "content": text})
+        episodic.write(f"[{source}] U: {query}\nF: {text}", source,
+                       _cfg.substrate.model, PROFILE_HASH)
 
-    episodic.write(f"[{source}] U: {query}\nF: {text}", source, _cfg.substrate.model, PROFILE_HASH)
     procedural.log_llm_call(
         source, _cfg.substrate.model, PROFILE_HASH, CONFIG_HASH,
         {"system_chars": len(system),
          "system_extra": system[len(PROFILE_TEXT):],   # orologio+goals+memorie; il PROFILE si ricostruisce dall'hash
          "messages": messages,
          "tool_rounds": convo[1 + len(messages):],     # round intermedi del loop (FRE-18)
-         "response": text, "tokens": tokens})
-    return text
+         "response": text, "tokens": tokens,
+         "chat_key": chat_key,
+         "api_calls": meta["api_calls"],               # chiamate API vere, non turni (change 5)
+         "rounds_used": meta["rounds_used"],
+         "truncated": meta["truncated"],
+         "substrate_alias": _cfg.substrate.model,
+         "substrate_model_id": meta["model_ids"],          # deployment LiteLLM (change 6)
+         "substrate_config_hash": SUBSTRATE_CONFIG_HASH,   # quale litellm.yaml era attivo
+         "cost_usd": meta["cost_usd"],
+         "latency_ms": meta["latency_ms"],
+         "retries": meta["retries"]})
+    return text, meta, convo
+
+
+def process(query: str, source: str, chat_key: str = "main") -> str:
+    return process_verbose(query, source, chat_key)[0]
+
+
+def reset_window(chat_key: str) -> None:
+    """Ogni batteria probe parte da finestra pulita: la continuita' tra batterie
+    deve passare dal retrieval episodico, non dalla coda della finestra (P04)."""
+    _windows.pop(chat_key, None)

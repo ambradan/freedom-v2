@@ -3,3 +3,12 @@ backups/
 __pycache__/
 *.pyc
 docs/baseline/*.jsonl
+
+# dump e snapshot: contengono llm_calls, cioe' conversazioni personali
+*.sql.gz
+*.snapshot
+offsite-staging/
+offsite.log
+*.bak
+*.bak2
+FETCH_HEAD
