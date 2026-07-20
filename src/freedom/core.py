@@ -65,7 +65,12 @@ def _assemble(query: str, chat_key: str) -> tuple[str, list[dict]]:
     return "\n\n".join(system_parts), messages
 
 
-def process_verbose(query: str, source: str, chat_key: str = "main") -> tuple[str, dict, list[dict]]:
+def process_verbose(query: str, source: str, chat_key: str = "main",
+                    memory_query: str | None = None) -> tuple[str, dict, list[dict]]:
+    """memory_query: testo alternativo per la memoria episodica (change 7, 20/7).
+    Il prompt Genesis e' un boilerplate fisso di ~500 token: scritto in episodica saturava
+    l'input dell'embedder e produceva vettori identici per cicli con contenuto opposto
+    (similarita' misurata 1.0). Nessun ciclo Genesis era recuperabile."""
     system, messages = _assemble(query, chat_key)
     text, tokens, convo, meta = substrate.chat(system, messages, source)
 
@@ -76,7 +81,7 @@ def process_verbose(query: str, source: str, chat_key: str = "main") -> tuple[st
     if not meta["truncated"]:
         _windows[chat_key].append({"role": "user", "content": query})
         _windows[chat_key].append({"role": "assistant", "content": text})
-        episodic.write(f"[{source}] U: {query}\nF: {text}", source,
+        episodic.write(f"[{source}] U: {memory_query or query}\nF: {text}", source,
                        _cfg.substrate.model, PROFILE_HASH)
 
     procedural.log_llm_call(

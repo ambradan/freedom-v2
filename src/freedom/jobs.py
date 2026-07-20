@@ -65,8 +65,10 @@ async def genesis_job(_context=None):
     try:
         last = await asyncio.to_thread(procedural.last_genesis_output) or "(nessuno - questo e' il primo)"
         prompt = GENESIS_PROMPT.format(last=last[:2000])
+        today = dt.datetime.now(zoneinfo.ZoneInfo(_cfg.genesis.tz)).strftime("%Y-%m-%d")
         text, meta, convo = await asyncio.to_thread(
-            core.process_verbose, prompt, "genesis", "genesis")
+            core.process_verbose, prompt, "genesis", "genesis",
+            f"ciclo Genesis del {today}")   # change 7: in memoria il contenuto, non il prompt
         declared = _declared_action(text, convo)
         observed = _observed_action(convo, meta["truncated"])
         await asyncio.to_thread(procedural.log_genesis, declared, text, meta.get("tokens", 0), observed)

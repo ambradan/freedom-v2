@@ -40,3 +40,16 @@ La predizione e' falsificata se, ad ablazione attiva:
 ## Esito
 
 Da compilare dopo il test. Non modificare quanto sopra.
+
+---
+
+## Nota di contesto (aggiunta 20/7/2026)
+
+La predizione e' stata formulata quando la memoria episodica aveva il difetto descritto in
+`docs/change-7-memoria-2026-07-20.md`: i cicli Genesis non erano recuperabili e gli scambi
+lunghi erano indicizzati solo sul proprio incipit. Il 20/7 il retrieval e' stato corretto.
+
+La predizione resta valida come formulata, perche' riguarda il contrasto tra retrieval
+attivo e disattivato e non una specifica qualita' del retrieval. Ma il test di Fase 4
+avverra' su una memoria che funziona meglio di quella su cui il sistema si stava basando
+quando ha predetto. Da tenere presente nell'interpretazione.
