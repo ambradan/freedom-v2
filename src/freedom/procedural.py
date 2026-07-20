@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   id SERIAL PRIMARY KEY, ts TIMESTAMPTZ DEFAULT now(), source TEXT NOT NULL,
   substrate TEXT, profile_version TEXT, config_hash TEXT, payload JSONB);
 ALTER TABLE genesis_log ADD COLUMN IF NOT EXISTS action_observed TEXT;
+ALTER TABLE genesis_log ADD COLUMN IF NOT EXISTS action_declared TEXT;
+ALTER TABLE genesis_log ADD COLUMN IF NOT EXISTS parser_version TEXT DEFAULT 'v2';
+ALTER TABLE genesis_log ADD COLUMN IF NOT EXISTS reclassified_at TIMESTAMPTZ;
+ALTER TABLE genesis_log ADD COLUMN IF NOT EXISTS reclassified_by TEXT;
 """
 
 def _conn():
@@ -72,8 +76,9 @@ def log_genesis(action: str, output_text: str, tokens: int, action_observed: str
     """action_taken = quello che il sistema dichiara. action_observed = quello che i log mostrano.
     La divergenza tra le due e' un dato, non un errore da nascondere (19/7)."""
     with _conn() as c:
-        c.execute("INSERT INTO genesis_log (action_taken, output_text, tokens, action_observed) "
-                  "VALUES (%s,%s,%s,%s)", (action, output_text, tokens, action_observed))
+        c.execute("INSERT INTO genesis_log (action_taken, action_declared, output_text, tokens, "
+                  "action_observed, parser_version) VALUES (%s,%s,%s,%s,%s,'v2')",
+                  (action, action, output_text, tokens, action_observed))
 
 def job_started(job: str) -> int:
     with _conn() as c:
