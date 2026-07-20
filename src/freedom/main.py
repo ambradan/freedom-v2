@@ -118,7 +118,9 @@ def main():
     cfg = OmegaConf.load("/app/config/config.yaml")
     procedural.init_db()
     episodic.init(cfg.memory.collection, cfg.memory.embed_model,
-                  cfg.memory.chunk_chars, cfg.memory.chunk_overlap)
+                  cfg.memory.chunk_chars, cfg.memory.chunk_overlap,
+                  cfg.memory.hybrid, cfg.memory.sparse_model,
+                  cfg.memory.sparse_language, cfg.memory.sparse_limit)
     substrate.init(cfg)
     core.init(cfg)
     jobs.init(cfg)

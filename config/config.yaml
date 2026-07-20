@@ -20,7 +20,11 @@ memory:
   k: 5                    # max memories injected
   window_turns: 10        # D2 - conversation window (turns)
   embed_model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-  collection: freedom_episodic_v2   # change 7 (20/7): chunking; v1 conservata intatta
+  collection: freedom_episodic_v3   # change 8 (20/7): ibrida denso+BM25; v1 e v2 conservate
+  hybrid: true            # false -> solo denso, comportamento pre-change 8
+  sparse_model: Qdrant/bm25
+  sparse_language: italian
+  sparse_limit: 20        # candidati dal ramo lessicale prima della fusione RRF
   chunk_chars: 400        # l'embedder tronca a 128 token, ~500 char misurati
   chunk_overlap: 80
 
