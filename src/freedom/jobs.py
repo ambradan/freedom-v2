@@ -98,14 +98,27 @@ async def backup_job(_context=None):
         dump = out / f"pg_{stamp}.sql.gz"
         cmd = f"pg_dump '{os.environ['PG_DSN']}' | gzip > {dump}"
         subprocess.run(["sh", "-c", cmd], check=True, timeout=300)
-        req = urllib.request.Request(
-            f"{os.environ.get('QDRANT_URL','http://qdrant:6333')}/collections/freedom_episodic/snapshots",
-            method="POST")
-        urllib.request.urlopen(req, timeout=60)
         size = dump.stat().st_size
         if size < 1024:
             raise RuntimeError(f"pg dump suspiciously small: {size}B")
-        await asyncio.to_thread(procedural.job_finished, run_id, "ok", f"pg={size}B + qdrant snapshot")
+
+        # 21/8: il nome era hardcoded su freedom_episodic mentre la collezione viva e' v3.
+        # Nove giorni di snapshot identici (851456B, 88 punti fossili) con esito 'ok'.
+        # Il nome viene dalla config, il file si scarica, e l'esito fallisce se non torna.
+        base = os.environ.get('QDRANT_URL', 'http://qdrant:6333')
+        coll = _cfg.memory.collection
+        import json as _json
+        with urllib.request.urlopen(
+                urllib.request.Request(f"{base}/collections/{coll}/snapshots", method="POST"),
+                timeout=120) as r:
+            snap = _json.load(r)["result"]
+        qfile = out / f"qdrant_{coll}_{stamp}.snapshot"
+        urllib.request.urlretrieve(f"{base}/collections/{coll}/snapshots/{snap['name']}", qfile)
+        qsize = qfile.stat().st_size
+        if qsize < 1024 or qsize != snap.get("size", qsize):
+            raise RuntimeError(f"qdrant snapshot sospetto: scaricati {qsize}B, attesi {snap.get('size')}B")
+        await asyncio.to_thread(
+            procedural.job_finished, run_id, "ok", f"pg={size}B + qdrant[{coll}]={qsize}B")
     except Exception as e:  # noqa: BLE001
         await asyncio.to_thread(procedural.job_finished, run_id, "error", str(e)[:300])
 
