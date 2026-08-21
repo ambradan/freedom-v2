@@ -73,6 +73,7 @@ def process_verbose(query: str, source: str, chat_key: str = "main",
     (similarita' misurata 1.0). Nessun ciclo Genesis era recuperabile."""
     system, messages = _assemble(query, chat_key)
     text, tokens, convo, meta = substrate.chat(system, messages, source)
+    meta = dict(meta, tokens=tokens)   # 21/8: il job leggeva meta['tokens'], che non esisteva: 24 cicli con tokens=0
 
     m = OPTOUT_RE.search(text)
     if m:

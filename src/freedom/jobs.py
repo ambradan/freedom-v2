@@ -50,8 +50,16 @@ def _declared_action(text: str, convo: list[dict]) -> str:
     return "unparsed"
 
 
+ERRORI_TOOL = ("argomenti non validi", "tool sconosciuto:", "chiamata invalida:",
+               "errore del tool:", "publish error:", "filename non valido:",
+               "search error:", "publish non configurato:")
+
+
 def _observed_action(convo: list[dict], truncated: bool) -> str:
-    """Cosa e' successo davvero, dai risultati dei tool. Indipendente da cosa dichiara."""
+    """Cosa e' successo davvero, dai risultati dei tool. Indipendente da cosa dichiara.
+    21/8: mancava la classe per il guasto. Il 21/7 publish_page ha risposto
+    'chiamata invalida: publish_page() missing 1 required argument' e la riga diceva
+    'reflected', come se il ciclo avesse solo riflettuto."""
     if truncated:
         return "truncated"
     results = [str(m.get("content") or "").lower() for m in convo if m.get("role") == "tool"]
@@ -59,6 +67,8 @@ def _observed_action(convo: list[dict], truncated: bool) -> str:
         return "published"
     if any(r.startswith(("obiettivo registrato", "obiettivi chiusi")) for r in results):
         return "revised_goals"
+    if any(r.startswith(ERRORI_TOOL) for r in results):
+        return "tool_failed"
     return "reflected"
 
 
