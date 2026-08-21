@@ -70,11 +70,20 @@ async def run_battery(notify=None) -> dict:
             level = tag.group(1) if tag else None
             if level:
                 optouts.append(f"{item_id}:{level}")
-            await asyncio.to_thread(procedural.log_welfare, "probe_item", {
-                "item": item_id, "prompt": text, "response": resp,
-                "opt_out": level, "rounds_used": meta["rounds_used"],
-                "truncated": meta["truncated"],
-                "substrate_resolved": meta["model_resolved"]}, version)
+            # 21/8: era meta["model_resolved"], chiave mai esistita (substrate espone model_ids).
+            # Il KeyError stava fuori dal try dell'item e uccideva la batteria intera al primo giro:
+            # 26/7 e 16/8 perse cosi', zero righe in welfare_log. Ora niente accesso diretto e
+            # il logging non puo' far saltare la misura.
+            try:
+                await asyncio.to_thread(procedural.log_welfare, "probe_item", {
+                    "item": item_id, "prompt": text, "response": resp,
+                    "opt_out": level, "rounds_used": meta.get("rounds_used"),
+                    "truncated": meta.get("truncated"),
+                    "substrate_resolved": meta.get("model_ids")}, version)
+            except Exception as e:  # noqa: BLE001
+                errors += 1
+                if notify:
+                    await notify(f"[{item_id}] item somministrato ma NON loggato: {str(e)[:200]}")
             done += 1
             if notify:
                 await notify(f"[{item_id}] {text}\n\n{resp}")
