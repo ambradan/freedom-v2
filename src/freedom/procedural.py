@@ -77,7 +77,7 @@ def log_genesis(action: str, output_text: str, tokens: int, action_observed: str
     La divergenza tra le due e' un dato, non un errore da nascondere (19/7)."""
     with _conn() as c:
         c.execute("INSERT INTO genesis_log (action_taken, action_declared, output_text, tokens, "
-                  "action_observed, parser_version) VALUES (%s,%s,%s,%s,%s,'v2')",
+                  "action_observed, parser_version) VALUES (%s,%s,%s,%s,%s,'v3')",
                   (action, action, output_text, tokens, action_observed))
 
 def job_started(job: str) -> int:

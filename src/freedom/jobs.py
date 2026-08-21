@@ -36,10 +36,12 @@ Ultimo output Genesis:
 
 
 def _declared_action(text: str, convo: list[dict]) -> str:
-    """La riga ACTION sta nel PRIMO messaggio assistant. Con un tool loop il testo finale
-    e' l'ultimo turno, dove ACTION non c'e' mai: e' cosi' che sei cicli su sei sono stati
-    registrati come 'reflected' (scoperto 19/7)."""
-    candidates = [m.get("content") or "" for m in convo if m.get("role") == "assistant"]
+    """ACTION emessa IN QUESTA chiamata. v2 scorreva tutti gli assistant di convo,
+    inclusi quelli della finestra: su 24 cicli ha letto 4 volte fuori chiamata,
+    2 con valore errato (audit 21/8). Il confine e' l'ultimo messaggio user:
+    dopo di quello il tool loop aggiunge solo tool e assistant."""
+    inizio = max((i for i, m in enumerate(convo) if m.get("role") == "user"), default=-1)
+    candidates = [m.get("content") or "" for m in convo[inizio + 1:] if m.get("role") == "assistant"]
     candidates.append(text or "")
     for c in candidates:
         m = ACTION_RE.search(c)
